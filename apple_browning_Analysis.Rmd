@@ -1,0 +1,277 @@
+---
+title: "Apple Browning: Analysis Code"
+output: html_document
+---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(ri2)
+library(randomizr)
+library(estimatr)
+library(broom)
+```
+
+## 1. Randomization before cutting
+
+```{r}
+set.seed(42)
+
+assignment <- data.frame(
+  slice_id = 1:100,
+  group = sample(rep(0:3, each = 25))
+)
+
+print(assignment)
+table(assignment$group)
+```
+
+## 2. Data Preparation and Outcome Distribution
+
+```{r}
+scores <- read.csv("scores.csv")
+
+treat <- merge(assignment, scores, by = "slice_id", all.x = TRUE)
+
+stopifnot(nrow(treat) == 100, !anyNA(treat$browning))
+
+treat$condition <- factor(
+  treat$group,
+  levels = 0:3,
+  labels = c("Control", "Lemon soda",
+             "Bottled lemonade", "Fresh lemon juice")
+)
+```
+
+### Table 1. Outcome Distribution
+
+```{r}
+outcome_table <- table(
+  treat$condition,
+  factor(treat$browning, levels = 0:2)
+)
+
+knitr::kable(
+  outcome_table,
+  col.names = c("Score 0", "Score 1", "Score 2")
+)
+```
+
+### Figure 1. Outcome Distribution
+
+```{r, fig.width=10, fig.height=6, dpi=300}
+fig1 <- ggplot(treat, aes(condition, fill = factor(browning))) +
+  geom_bar(position = "dodge") +
+  geom_text(
+    aes(label = after_stat(count)),
+    stat = "count",
+    position = position_dodge(width = 0.9),
+    vjust = -0.3
+  ) +
+  scale_fill_grey(name = "Browning score") +
+  theme_bw() +
+  labs(
+    title = "Figure 1: Distribution of Browning Scores by Treatment Condition",
+    x = "Treatment Category",
+    y = "Number of apple slices"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  theme(
+    axis.text.x = element_text(size = 14),
+    axis.title.x = element_text(size = 15),
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size = 15),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 13)
+  )
+
+ggsave("Fig1.pdf", plot = fig1, width = 10, height = 6)
+
+fig1
+```
+
+## 3. Hypothesis Testing
+
+```{r}
+# H1: Bottled lemonade vs control
+h1 <- subset(treat, group %in% c(0, 2))
+h1$D <- as.integer(h1$group == 2)
+fit1 <- lm(browning ~ D, data = h1)
+
+# H2: Fresh lemon juice vs control
+h2 <- subset(treat, group %in% c(0, 3))
+h2$D <- as.integer(h2$group == 3)
+fit2 <- lm(browning ~ D, data = h2)
+
+# H3: Lemon soda vs control
+h3 <- subset(treat, group %in% c(0, 1))
+h3$D <- as.integer(h3$group == 1)
+fit3 <- lm(browning ~ D, data = h3)
+
+# H4: Bottled lemonade vs fresh lemon juice
+h4 <- subset(treat, group %in% c(2, 3))
+h4$D <- as.integer(h4$group == 2)
+fit4 <- lm(browning ~ D, data = h4)
+
+# H5: Lemon soda vs fresh lemon juice
+h5 <- subset(treat, group %in% c(1, 3))
+h5$D <- as.integer(h5$group == 1)
+fit5 <- lm(browning ~ D, data = h5)
+
+declaration <- declare_ra(N = 50, m = 25)
+
+set.seed(42)
+
+ri1 <- conduct_ri(browning ~ D, assignment = "D",
+                  declaration = declaration, sharp_hypothesis = 0,
+                  sims = 10000, data = h1)
+
+ri2 <- conduct_ri(browning ~ D, assignment = "D",
+                  declaration = declaration, sharp_hypothesis = 0,
+                  sims = 10000, data = h2)
+
+ri3 <- conduct_ri(browning ~ D, assignment = "D",
+                  declaration = declaration, sharp_hypothesis = 0,
+                  sims = 10000, data = h3)
+
+ri4 <- conduct_ri(browning ~ D, assignment = "D",
+                  declaration = declaration, sharp_hypothesis = 0,
+                  sims = 10000, data = h4)
+
+ri5 <- conduct_ri(browning ~ D, assignment = "D",
+                  declaration = declaration, sharp_hypothesis = 0,
+                  sims = 10000, data = h5)
+```
+
+## 4. Confidence Interval Estimation
+
+```{r}
+set.seed(42)
+
+ate1 <- coef(fit1)["D"]
+ate2 <- coef(fit2)["D"]
+ate3 <- coef(fit3)["D"]
+ate4 <- coef(fit4)["D"]
+ate5 <- coef(fit5)["D"]
+
+ri_ci1 <- conduct_ri(browning ~ D, assignment = "D",
+                     declaration = declaration, sharp_hypothesis = ate1,
+                     sims = 10000, data = h1)
+
+ri_ci2 <- conduct_ri(browning ~ D, assignment = "D",
+                     declaration = declaration, sharp_hypothesis = ate2,
+                     sims = 10000, data = h2)
+
+ri_ci3 <- conduct_ri(browning ~ D, assignment = "D",
+                     declaration = declaration, sharp_hypothesis = ate3,
+                     sims = 10000, data = h3)
+
+ri_ci4 <- conduct_ri(browning ~ D, assignment = "D",
+                     declaration = declaration, sharp_hypothesis = ate4,
+                     sims = 10000, data = h4)
+
+ri_ci5 <- conduct_ri(browning ~ D, assignment = "D",
+                     declaration = declaration, sharp_hypothesis = ate5,
+                     sims = 10000, data = h5)
+
+ci1 <- 2*ate1 - quantile(ri_ci1$sims_df$est_sim, c(0.975, 0.025))
+ci2 <- 2*ate2 - quantile(ri_ci2$sims_df$est_sim, c(0.975, 0.025))
+ci3 <- 2*ate3 - quantile(ri_ci3$sims_df$est_sim, c(0.975, 0.025))
+ci4 <- 2*ate4 - quantile(ri_ci4$sims_df$est_sim, c(0.975, 0.025))
+ci5 <- 2*ate5 - quantile(ri_ci5$sims_df$est_sim, c(0.975, 0.025))
+
+intervals <- rbind(H1 = ci1, H2 = ci2, H3 = ci3,
+                   H4 = ci4, H5 = ci5)
+
+colnames(intervals) <- c("CI_lower", "CI_upper")
+```
+
+## 5. Testing and Estimation Results
+
+### Table 2. ATE Estimates, Standard Errors, Confidence Intervals, and Randomization Inference
+
+```{r}
+results <- data.frame(
+  Hypothesis = paste0("H", 1:5),
+
+  Comparison = c(
+    "Lemonade vs control",
+    "Fresh lemon vs control",
+    "Soda vs control",
+    "Lemonade vs fresh lemon",
+    "Soda vs fresh lemon"
+  ),
+
+  ATE = unname(c(ate1, ate2, ate3, ate4, ate5)),
+
+  SE = c(
+    summary(fit1)$coefficients["D", "Std. Error"],
+    summary(fit2)$coefficients["D", "Std. Error"],
+    summary(fit3)$coefficients["D", "Std. Error"],
+    summary(fit4)$coefficients["D", "Std. Error"],
+    summary(fit5)$coefficients["D", "Std. Error"]
+  ),
+
+  CI_lower = intervals[, "CI_lower"],
+  CI_upper = intervals[, "CI_upper"],
+
+  RI_p = c(
+    summary(ri1, p = "two-tailed")$two_tailed_p_value,
+    summary(ri2, p = "two-tailed")$two_tailed_p_value,
+    summary(ri3, p = "two-tailed")$two_tailed_p_value,
+    summary(ri4, p = "two-tailed")$two_tailed_p_value,
+    summary(ri5, p = "two-tailed")$two_tailed_p_value
+  )
+)
+
+knitr::kable(results, digits = 3, row.names = FALSE)
+```
+
+## 6. Results Visualization
+
+### Figure 2. Individual Outcomes and Estimated Group Means
+
+```{r, fig.width=10, fig.height=6, dpi=300}
+summary_df <-
+  treat |>
+  group_by(condition) |>
+  do(tidy(lm_robust(browning ~ 1, data = .))) |>
+  mutate(browning = estimate)
+
+browning_plot <-
+  ggplot(summary_df, aes(condition, browning)) +
+  geom_point(
+    data = treat,
+    position = position_jitter(width = 0.2, height = 0.1),
+    alpha = 0.2
+  ) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0) +
+  geom_text(
+    aes(label = sprintf("%.2f", estimate)),
+    nudge_x = 0.18,
+    size = 4
+  ) +
+  theme_bw() +
+  scale_y_continuous(breaks = 0:2) +
+  coord_cartesian(ylim = c(-0.2, 2.2)) +
+  labs(
+    title = "Figure 2: Mean Apple Browning by Treatment Condition",
+    x = "Treatment category",
+    y = "Apple Browning Score (0–2)",
+    caption = paste(
+      "Small circles = Individual apple slices",
+      "Black dots = Group means",
+      "Vertical lines = 95% confidence intervals for group means",
+      sep = "\n"
+    )
+  ) +
+  theme(
+    axis.text.x = element_text(size = 14),
+    plot.caption = element_text(size = 14, hjust = 0)
+  )
+
+browning_plot
+
+ggsave("Fig2.pdf", plot = browning_plot, width = 10, height = 6)
+```
